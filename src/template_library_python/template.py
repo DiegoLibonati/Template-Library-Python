@@ -43,7 +43,7 @@ def main() -> None:
 
     logger.info(f"Model: {type(library.pydantic_model)}")
 
-    library.throw_not_found()
+    # library.throw_not_found()
 
 
 if __name__ == "__main__":
