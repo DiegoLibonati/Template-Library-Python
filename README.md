@@ -159,23 +159,94 @@ Template-Library-Python/
 
 ## Architecture & Design Patterns
 
-This template is built around a **layered architecture** where each layer has a single responsibility and dependencies only flow inward:
+### Layered Architecture
+
+The library follows a **bottom-up layered architecture** where each layer depends only on the layers below it. This enforces clear separation of concerns and makes each layer independently testable.
 
 ```
-template.py (Public Library)
-      ↓
-   models/          ← data validation
-   utils/           ← exceptions
-      ↓
-  constants/        ← codes & messages
-  configs/          ← logging
+┌─────────────────────────────────────┐
+│         Template (Public API)       │  ← Layer 5: Business logic
+├─────────────────────────────────────┤
+│            models/                  │  ← Layer 4: Data validation (Pydantic)
+├─────────────────────────────────────┤
+│            configs/                 │  ← Layer 3: Infrastructure (logging)
+├─────────────────────────────────────┤
+│             utils/                  │  ← Layer 2: Exception hierarchy
+├─────────────────────────────────────┤
+│           constants/                │  ← Layer 1: Error codes & messages
+└─────────────────────────────────────┘
 ```
 
-- **Layered Architecture** — logic is split into clearly separated layers (constants → utils → models → public API). No layer skips levels or creates circular dependencies.
-- **Centralized Constants** — all error codes and messages live in `constants/`. Classes never define raw strings inline; they always import from this layer.
-- **Custom Exception Hierarchy** — all exceptions extend `BaseError`, which carries a structured `code` and `message`. This allows consumers to catch at any level (`BaseError`, `NotFoundError`, etc.) and inspect the error in a predictable way.
-- **Single Responsibility** — each module has one clear purpose. `logger_config.py` only sets up loggers, `exceptions.py` only defines exceptions, `template_model.py` only validates data.
-- **Encapsulated Public Library** — `__init__.py` explicitly defines `__all__`, exposing only `Template` to consumers. Internal modules (`constants`, `utils`, `configs`, `models`) are implementation details.
+**Layer 1 — `constants/`**: Single source of truth for all error codes (`codes.py`) and human-readable messages (`messages.py`). No other logic lives here; no imports from upper layers.
+
+**Layer 2 — `utils/exceptions.py`**: Custom exception hierarchy rooted at `BaseError`. Each exception carries a `code` and a `message` pulled from the constants layer. Subclasses (`ValidationError`, `NotFoundError`, `AuthenticationError`, `ConflictError`, `BusinessError`, `InternalError`) represent distinct semantic error categories.
+
+**Layer 3 — `configs/logger_config.py`**: Infrastructure setup. Exposes `setup_logger()`, which configures a `logging.Logger` with a consistent format and output stream. Depends only on the constants layer.
+
+**Layer 4 — `models/`**: Pydantic `BaseModel` subclasses for declarative input validation. Validation rules (field constraints, type coercion) are declared here rather than scattered through business logic.
+
+**Layer 5 — `template.py`**: The main `Template` class. This is the only public API surface (`__all__ = ["Template"]`). It composes all lower layers: uses the logger factory, raises typed exceptions, and validates inputs through models.
+
+---
+
+### Design Patterns
+
+#### Factory Method — `setup_logger()`
+`setup_logger(name)` is a factory function that creates and returns a fully configured `logging.Logger`. Consumers never instantiate loggers directly, ensuring a consistent format, level, and output stream across all modules.
+
+#### Guard / Idempotent Initialization
+Inside `setup_logger()`, the guard `if not logger.handlers:` prevents duplicate handlers from being attached when the function is called more than once with the same name. This is a common pattern when module-level loggers are used in libraries.
+
+#### Custom Exception Hierarchy
+All exceptions extend `BaseError`, which carries both a machine-readable `code` and a human-readable `message`. This enables callers to catch specific exception types (`except NotFoundError`) or the entire hierarchy (`except BaseError`), and to inspect structured error information programmatically.
+
+```
+Exception
+└── BaseError
+    ├── ValidationError
+    ├── AuthenticationError
+    ├── NotFoundError
+    ├── ConflictError
+    ├── BusinessError
+    └── InternalError
+```
+
+#### Composition
+The `Template` class does not inherit from lower-layer components. Instead, it **composes** them: the logger is obtained via `setup_logger()`, exceptions are raised using the exception hierarchy, and input validation is delegated to Pydantic models. This keeps the class focused on business logic and makes dependencies explicit.
+
+#### Centralized Constants
+Error codes and messages are defined once in `constants/` and imported wherever needed. This prevents magic strings from spreading through the codebase and makes updates (e.g., changing an error message) a single-file change.
+
+#### Declarative Validation (Pydantic)
+Input validation rules are expressed as field annotations on Pydantic models rather than imperative checks inside methods. This keeps the `Template` class lean and makes validation rules easy to read, test, and extend.
+
+---
+
+### Module Interaction Flow
+
+```
+Consumer Code
+      │
+      ▼
+Template  ──► TemplateModel (validates input)
+      │
+      ├──► setup_logger()   (logging infrastructure)
+      │
+      ├──► NotFoundError / ValidationError / ...  (typed exceptions)
+      │         └──► CODE_* / MESSAGE_*  (constants)
+      │
+      └──► CODE_* / MESSAGE_*  (constants, used directly when raising)
+```
+
+---
+
+### Public API
+
+Only `Template` is exported. All other modules (`constants`, `utils`, `configs`, `models`) are internal implementation details and should not be imported directly by consumers.
+
+```python
+from template_library_python import Template
+```
 
 ## Known Issues
 
